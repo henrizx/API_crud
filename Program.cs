@@ -1,66 +1,88 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.SqlServer;
+using Microsoft.EntityFrameworkCore.Design;
+
 using Microsoft.VisualBasic;
 
 var builder = WebApplication.CreateBuilder(args);
+/*builder.Services.AddSqlServer<ApplicationDbContext>(options =>
+    options.UseSqlServer(builder.Configuration["Database:SqlServer"]));*/
+
+
+builder.Services.AddSqlServer<ApplicationDbContext>(builder.Configuration["Database:SqlServer"]);
+
+
+
+
+
+
 var app = builder.Build();
 var configuration = app.Configuration;
 ProductRepository.Init(configuration);
 
-app.MapPost("/products", (Product product) => {
-    ProductRepository.Add(product);
-    return Results.Created($"/products/{product.Code}", product.Code);
+app.MapPost("/products", (ProductRequest productRequest, ApplicationDbContext context) => {
+     var category = context.Categories.Where(c => c.Id == productRequest.CategoryId).First();
+     var product = new Product{
+          Code = productRequest.Code,
+          Name = productRequest.Name,
+          Description = productRequest.Description,
+          Category = category
+     };
+     if(productRequest != null){
+          product.Tags = new List<Tag>();
+          foreach (var item in productRequest.Tags){
+               product.Tags.Add(new Tag{Name = item});
+          }
+     }
+     context.Products.Add(product);
+     context.SaveChanges();
+    return Results.Created($"/products/{product.Id}", product.Id);
 });
 
-app.MapGet("/products/{code}", ([FromRoute] string code) => {
-     var product = ProductRepository.GetBy(code);
+app.MapGet("/products/{id}", ([FromRoute] int id, ApplicationDbContext context) => {
+     var product = context.Products
+     .Include(p => p.Category)
+     .Include(p => p.Tags)
+     .Where(p => p.Id == id).First();
      if(product != null)
           return Results.Ok(product);
      return Results.NotFound();
 });
 
 
-app.MapPut("/products", (Product product) => {
-     var productSaved = ProductRepository.GetBy(product.Code);
-     productSaved.Name = product.Name;
+app.MapPut("/products/{id}", ([FromRoute] int id, ProductRequest productRequest, ApplicationDbContext context) => {
+     var product = context.Products
+         
+          .Include(p => p.Tags)
+          .Where(p => p.Id == id).First();
+     var category = context.Categories.Where(c => c.Id == productRequest.CategoryId).First();
+
+     product.Code = productRequest.Code;
+     product.Name = productRequest.Name;
+     product.Description = productRequest.Description;
+     product.Category = category;
+     if(productRequest.Tags != null){
+          product.Tags = new List<Tag>();
+          foreach (var item in productRequest.Tags){
+               product.Tags.Add(new Tag{Name = item});
+          }
+     }
+     context.SaveChanges();
      return Results.Ok();
 });
 
 
-app.MapDelete("/products/{code}", ([FromRoute]string code) => {
-     var productSaved = ProductRepository.GetBy(code);
-     ProductRepository.Remove(productSaved);
+app.MapDelete("/products/{id}", ([FromRoute]int id, ApplicationDbContext context)=> {
+     var product = context.Products.Where(p => p.Id == id).First();
+     context.Products.Remove(product);
+     context.SaveChanges();
      return Results.Ok();
 });
 
-if(app.Environment.IsStaging())
-     app.MapGet("/configuration/database", (IConfiguration configuration) => {
-     return Results.Ok($"{configuration["database:connection"]} / {configuration["database:port"]}");
-     });
+if(app.Environment.IsDevelopment())
+    app.MapGet("/configuration/database", (IConfiguration configuration) => {
+    return Results.Ok($"{configuration["database:connection"]} / {configuration["database:port"]}");
+});
+
 app.Run();
-
-
-//Emulação de BD
-public static class ProductRepository {
-     public static List<Product> Products {get; set;} = Products = new List<Product>();
-     public static void Init(IConfiguration configuration){
-          var products = configuration.GetSection("Products").Get<List<Product>>();
-          Products = products;
-     }
-
-     public static void Add(Product product){
-          Products.Add(product);
-     }
-
-     public static Product GetBy (string code){
-      return Products.FirstOrDefault (p => p.Code == code);
-     }
-
-     public static void Remove (Product product) {
-          Products.Remove(product);
-     }
-}
-//acaba aqui
-public class Product {
-     public string Code {get; set;}
-     public string Name {get; set;}
-}
